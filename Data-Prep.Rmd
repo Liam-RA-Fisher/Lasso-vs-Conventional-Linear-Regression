@@ -1,0 +1,100 @@
+---
+title: "Data Prep"
+author: Liam Fisher
+date: 12/11/2020
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library("tidyverse")
+library("modelr")
+library("broom")
+library("corrplot")
+library("caret")
+library("DescTools")
+
+ds_jobs <- read_csv("/Users/liamf/OneDrive/Desktop/DataAnalyst.csv", na = "-1", col_types = cols(X1 = col_integer(), Founded = col_integer()))
+```
+
+# Introduction
+
+"Amidst the pandemic many people lost their jobs, with this dataset it is possible to hone the job search so that more people in need can find employment. This dataset was created by picklesueat and contains 2253 job listings for data science positions from glassdoor.com from July 2020"
+
+Link to Dataset: \
+https://www.kaggle.com/andrewmvd/data-analyst-jobs
+
+Link to the creators Github can be found here:  \
+https://github.com/picklesueat/data_jobs_data/blob/master/DataAnalyst.csv
+
+# 1 Data Cleaning and Prep
+
+### Data Overview
+
+Job Title: *Job title* \
+Salary Estimate: *Glassdoor salary estimate* \
+Job Description: *Job description* \
+Rating Company: *rating* \
+Company Name: *Company name* \
+Location: *Location* \
+Headquarters: *Company Headquarters location* \
+Size: Company *size by number of employees* \
+Founded: Year *the company was founded* \
+Type of ownership: *Type of company ownership* \
+Industry: *Industry* \
+Sector: *Sector within the industry* \
+Revenue: *Yearly revenue* \
+Competitors: *Main competitors* \
+Easy Apply: *Whether easy apply is available or not* \
+
+https://www.kaggle.com/andrewmvd/data-analyst-jobs
+
+```{r, message = FALSE, warning = FALSE}
+ds_jobs_tidy <- ds_jobs %>%
+  rename("ID" = X1) %>%
+  rename_with( ~ tolower(gsub(" ", "_", .x))) %>%
+  mutate(salary_estimate = str_remove_all(salary_estimate, "[$K (Glassdoor est.)]")) %>%
+  separate(salary_estimate, c("salary_estimate_lower", "salary_estimate_upper"), sep = "-", convert = TRUE) %>%
+  mutate(salary_estimate_middle = (salary_estimate_lower + salary_estimate_upper) / 2) %>%
+  separate(company_name, c("company_name", "temp"), sep = "\n") %>%
+  select(-temp) %>%
+  mutate(location = str_remove_all(location, ", Arapahoe")) %>%
+  mutate(headquarters = str_remove_all(headquarters, ", NY \\(US\\)")) %>%
+  separate(location, c("city", "loc"), sep = ", ") %>%
+  separate(headquarters, c("headquarters_city", "headquarters_loc"), sep = ", ") %>%
+  mutate(size = na_if(size, "Unknown")) %>%
+  mutate(type_of_ownership = na_if(type_of_ownership, "Unknown")) %>%
+  mutate(revenue = na_if(revenue, "Unknown / Non-Applicable")) %>%
+  mutate(size_ordinal = case_when(size == "1 to 50 employees" ~ 1,
+                                  size == "51 to 200 employees" ~ 2,
+                                  size == "201 to 500 employees" ~ 3,
+                                  size == "501 to 1000 employees" ~ 4,
+                                  size == "1001 to 5000 employees" ~ 5,
+                                  size == "5001 to 10000 employees" ~ 6,
+                                  size == "10000+ employees" ~ 7)) %>%
+  mutate(revenue_ordinal = case_when(revenue == "Less than $1 million (USD)" ~ 1,
+                                     revenue == "$1 to $5 million (USD)" ~ 2,
+                                     revenue == "$5 to $10 million (USD)" ~ 3,
+                                     revenue == "$10 to $25 million (USD)" ~ 4,
+                                     revenue == "$25 to $50 million (USD)" ~ 5,
+                                     revenue == "$50 to $100 million (USD)" ~ 6,
+                                     revenue == "$100 to $500 million (USD)" ~ 7,
+                                     revenue == "$500 million to $1 billion (USD)" ~ 8,
+                                     revenue == "$1 to $2 billion (USD)" ~ 9,
+                                     revenue == "$2 to $5 billion (USD)" ~ 10,
+                                     revenue == "$5 to $10 billion (USD)" ~ 11,
+                                     revenue == "$10+ billion (USD)" ~ 12))
+```
+
+# Untidy Data
+
+```{r, echo = TRUE}
+str(ds_jobs, vec.len = 1)
+```
+
+# Cleanded Data
+
+```{r, echo = TRUE}
+str(ds_jobs_tidy, vec.len = 1)
+```

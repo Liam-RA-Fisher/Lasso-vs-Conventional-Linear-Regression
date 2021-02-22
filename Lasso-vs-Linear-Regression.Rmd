@@ -1,0 +1,329 @@
+---
+title: "Project 3"
+author: "Liam Fisher"
+date: "12/4/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("tidyverse")
+library("modelr")
+library("broom")
+library("corrplot")
+library("caret")
+library("DescTools")
+```
+
+# Data
+
+"Amidst the pandemic many people lost their jobs, with this dataset it is possible to hone the job search so that more people in need can find employment.This dataset was created by picklesueat and contains more than 2000 job listing for data analyst positions, with features such as: Salary Estimate, Location, Company Rating, Job Description, and more." \
+*https://www.kaggle.com/andrewmvd/data-analyst-jobs* \
+ \
+The data tidying process can be found in *Projet-2-Liam-Fisher.Rmd*. The tidy data is used in this project and is loaded with the following code: \
+
+```{r, message = FALSE}
+ds_jobs_tidy <- read_csv("/Users/liamf/OneDrive/Desktop/DataAnalystTidy.csv")
+```
+ 
+# Modeling
+
+The goal of this modeling exercise is to understand how the variables in the dataset relate to the salary estimate of the job, and how well they can be used to predict the salary estimate of the job. Predicting the best salary based on some descriptives about the job could be useful for people looking for data science jobs. As well, understanding how the variables relate to the salary is also useful for job seekers.
+
+## Variable Selection for linear Model to Predict Salary
+
+### Correlation analysis of numeric variables
+
+```{r, message =FALSE,}
+jobs_sub_mod <- ds_jobs_tidy %>% select(6, 13, 20, 21, 22)
+
+res = cor(na.omit(jobs_sub_mod))
+
+corrplot(res)
+```
+
+None of the numeric variables are strongly correlated with salary estimate. \
+
+### Residuals of Numeric Columns in data.
+
+```{r, warning=FALSE, echo = FALSE, message =FALSE, fig.show="hold", out.width="50%"}
+ggplot(ds_jobs_tidy, aes(size_ordinal, salary_estimate_middle)) +
+  geom_ref_line(h = mean(ds_jobs_tidy[["salary_estimate_middle"]], na.rm = TRUE)) +
+  geom_point()  +
+  geom_smooth(method='lm', se = F)
+
+ggplot(ds_jobs_tidy, aes(revenue_ordinal, salary_estimate_middle)) +
+  geom_ref_line(h = mean(ds_jobs_tidy[["salary_estimate_middle"]], na.rm = TRUE)) +
+  geom_point() +
+  geom_smooth(method='lm', se = F)
+
+ggplot(ds_jobs_tidy, aes(founded, salary_estimate_middle)) +
+  geom_point() +
+  geom_smooth(method='lm', se = F)
+
+ggplot(ds_jobs_tidy, aes(rating, salary_estimate_middle)) +
+  geom_point() +
+  geom_smooth(method='lm', se = F)
+```
+
+Upon visual inspection, it does not appear that any variable transformation will make these variables fit better. It appears that the residuals are mostly random. 
+
+### Visualization of Salary Differances in salary across categorical variables.
+
+```{r, echo = FALSE, warning=FALSE, message = FALSE}
+ds_jobs_tidy %>%
+  ggplot(aes(sector, salary_estimate_middle)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45))
+
+ds_jobs_tidy %>%
+  ggplot(aes(type_of_ownership, salary_estimate_middle)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45))
+
+ds_jobs_tidy %>%
+  ggplot(aes(loc, salary_estimate_middle)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+There does appear to be some salary differences between the categories of the size, loc, and type of ownership. These differences will be further explored using Analysis of Variance.\
+
+## Creating Train and Test data.
+
+```{r}
+ds_jobs_tidy_mod <- ds_jobs_tidy %>%
+  filter(loc != "KS") %>%
+  filter(loc != "SC") %>%
+  filter(loc != "GA" )%>%
+  filter(sector != "Mining & Metals") %>%
+  filter(sector != "Travel & Tourism") %>%
+  filter(sector != "Restaurants, Bars & Food Services") %>%
+  filter(sector != "Arts, Entertainment & Recreation") %>%
+  filter(type_of_ownership != "Franchise") %>%
+  filter(type_of_ownership != "Self-employed") %>%
+  filter(type_of_ownership != "Private Practice / Firm") %>%	
+  filter(type_of_ownership != "School / School District")
+
+set.seed(100) 
+
+index = sample(1:nrow(ds_jobs_tidy_mod), 0.7*nrow(ds_jobs_tidy_mod)) 
+
+train = ds_jobs_tidy_mod[index,] # Create the training data 
+test = ds_jobs_tidy_mod[-index,] # Create the test data
+
+dim(train)
+dim(test)
+```
+
+This code creates a training set with 70% of the data, and a test set with the remaining 30% of the data. It also removes the values from the loc, sector, and type of ownership columns which have too few occurrences to be useful to the models. 
+
+## Rescaling and Dummy Coding (one-hot coding)
+
+```{r}
+cols = c("size_ordinal", "founded", "rating")
+
+pre_proc_val <- preProcess(train[,cols], method = c("center", "scale"))
+
+train[,cols] = predict(pre_proc_val, train[,cols])
+test[,cols] = predict(pre_proc_val, test[,cols])
+
+train_sub <- train %>%
+  select(salary_estimate_middle, rating, loc, founded, type_of_ownership, sector, size_ordinal) %>%
+  na.omit()
+
+test_sub <- test %>%
+  select(salary_estimate_middle, rating, loc, founded, type_of_ownership, sector, size_ordinal) %>%
+  na.omit()
+
+train_sub_ready <- model_matrix(train_sub, salary_estimate_middle ~ rating + loc + founded + sector + type_of_ownership + size_ordinal - 1) %>% 
+  rename_with( ~ tolower(gsub(" ", "_", .x))) %>%
+  add_column(train_sub["salary_estimate_middle"])
+
+test_sub_ready <- model_matrix(test_sub, salary_estimate_middle ~ rating + loc + founded + sector + type_of_ownership + size_ordinal - 1) %>% 
+  rename_with( ~ tolower(gsub(" ", "_", .x))) %>%
+  add_column(test_sub["salary_estimate_middle"])
+
+cases_to_variables = nrow(train_sub_ready) / ncol(train_sub_ready)
+
+cases_to_variables
+```
+
+NOTE: Industry was excluded from the model so that the rows to columns would not go below 10/1. It is recommended for regression models to not go below 10 cases for each variable in the model.
+
+## Lasso and Linear Regression
+
+### Creating Data Matrix for glmnet()
+
+```{r, message = FALSE, warning = FALSE}
+dummies <- dummyVars(salary_estimate_middle ~ ., data = train_sub_ready)
+
+train_dummies = predict(dummies, newdata = train_sub_ready)
+
+test_dummies = predict(dummies, newdata = test_sub_ready)
+
+dim(train_dummies)
+
+dim(test_dummies)
+
+library(glmnet)
+
+x = as.matrix(train_dummies)
+y_train = train_sub_ready$salary_estimate_middle
+
+x_test = as.matrix(test_dummies)
+y_test = test_sub_ready$salary_estimate_middle
+```
+
+Note: glmnet() will only accept a data matrix and not a Tibble.
+
+### Estimating Penalty Parameter Lambda for Lasso Regression
+
+```{r}
+lambdas <- 10^seq(2, -3, by = -.005)
+
+lasso_reg <- cv.glmnet(x, y_train, alpha = 1, lambda = lambdas, standardize = TRUE, nfolds = 20)
+
+lambda_best <- lasso_reg$lambda.min 
+lambda_best
+```
+
+Cross Validation was used to estimate the best value for lambda in the lasso model. Lambda is the value that weights the loss function (The loss function penalizes larger coefficients) against Ordinary least Squares. lambda.min is the lambda value that best reduced prediction error (RMSE).
+
+### Creating Lasso Model
+
+```{r}
+lasso_model <- glmnet(x, y_train, alpha = 1, lambda = lambda_best, standardize = TRUE)
+
+pred <- predict(lasso_model, x_test, type="response", s = lambda_best)
+```
+
+### Creating Linear Model
+
+```{r}
+linear_model = lm(salary_estimate_middle ~ rating + loc + founded + sector + type_of_ownership + size_ordinal, data = train_sub)
+```
+
+### Evaluating Both Models Performances
+
+```{r}
+# Compute R^2 from true and predicted values
+eval_results <- function(true, predicted, df) {
+  SSE <- sum((predicted - true)^2)
+  SST <- sum((true - mean(true))^2)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/nrow(df))
+  # Model performance metrics
+  data.frame(RMSE = RMSE, Rsquare = R_square)
+}
+```
+
+This is a function from *https://www.pluralsight.com/guides/linear-lasso-and-ridge-regression-with-r* for evaluating the Rsquared and RMSE of linear models.
+
+#### Lasso Regression
+
+```{r, message=FALSE, fig.show = "hold", out.width = "50%"}
+predictions_train <- predict(lasso_model, s = lambda_best, newx = x)
+eval_results(y_train, predictions_train, train)
+
+predictions_test <- predict(lasso_model, s = lambda_best, newx = x_test)
+eval_results(y_test, predictions_test, test)
+```
+
+```{r, echo = FALSE, message=FALSE}
+lasso_res_df <- as_tibble(as_vector(y_test)) %>%
+  rename(orig = value) %>%
+  add_column(as_tibble(as_vector(predictions_test))) %>%
+  rename(value = "1") %>%
+  mutate(resid = value - orig) %>%
+  arrange(-desc(orig))
+
+ggplot(lasso_res_df, aes(orig, resid)) + 
+  geom_ref_line(h = 0) +
+  geom_point() +
+  ggtitle("Lasso Model Residual - Test Data")
+
+lasso_res_df2 <- as_tibble(as_vector(y_train)) %>%
+  rename(orig = value) %>%
+  add_column(as_tibble(as_vector(predictions_train))) %>%
+  rename(value = "1") %>%
+  mutate(resid = value - orig) %>%
+  arrange(-desc(orig))
+
+ggplot(lasso_res_df2, aes(orig, resid)) + 
+  geom_ref_line(h = 0) +
+  geom_point() +
+  ggtitle("Lasso Model Residual - Training Data")
+```
+
+#### Linear Regression
+
+```{r, message=FALSE, fig.show = "hold", out.width = "50%"}
+predictions_train_lin <- predict(linear_model, train_sub)
+eval_results(train_sub[["salary_estimate_middle"]], predictions_train_lin, train)
+
+predictions_test_lin <- predict(linear_model, test_sub)
+eval_results(test_sub[["salary_estimate_middle"]], predictions_test_lin, test)
+```
+
+```{r, echo = FALSE, message=FALSE}
+lin_res_df <- as_tibble(test_sub[["salary_estimate_middle"]]) %>%
+  rename(orig = value) %>%
+  add_column(as_tibble(as_vector(predictions_test_lin))) %>%
+  mutate(resid = value - orig) %>%
+  arrange(-desc(orig))
+
+ggplot(lin_res_df, aes(orig, resid)) + 
+  geom_ref_line(h = 0) +
+  geom_point() +
+  ggtitle("Linear Model Residual - Test Data")
+
+lin_res_df2 <- as_tibble(train_sub[["salary_estimate_middle"]]) %>%
+  rename(orig = value) %>%
+  add_column(as_tibble(as_vector(predictions_train_lin))) %>%
+  mutate(resid = value - orig) %>%
+  arrange(-desc(orig))
+
+ggplot(lin_res_df2, aes(orig, resid)) + 
+  geom_ref_line(h = 0) +
+  geom_point() +
+  ggtitle("Linear Model Residual - Training Data")
+```
+
+## Summary
+
+First, the data was analyzed to determine which variables to include in a linear model for predicting salary estimate. Two models were built, One using Lasso Linear Regression, and the other using Linear Regression. Both models have weak predictive power and a relatively large prediction error. The RMSE for the test data was 17.7 (Lasso), and 17.9 (Linear). This can be interpreted as the prediction error having a standard deviation of about 18,000$. Of the two models (Lasso Linear Regression, and Linear Regression), the Lasso model performed better on the test data overall but only slightly. \
+ \
+A key point; however, is that Lasso was able to improve the model while reducing the coefficients from 44 to 21. This would have a real world advantage on improving the models computation time on new data. The results of these models demonstrated some of the advantages of applying Lasso to conventional linear regression. The advantages being improved computation time, less over fitting, and better performance on data that the model was not trained on.\
+ \
+Another note is the residuals of the models. The residuals have a linear slope to them. This means that the models are favoring the mean of the dependent variable over the information from the independent variables. This is evident in the intercept being significantly larger than the all of the coefficients. This tells me that there is not enough information in the independent variables to build a very good model. I also tried including interactions between the categorical variables but that only worsened the models performance on the test data. My conclusion is that more information (other variables) are required to fit a better model for predicting salary estimate. My models are missing key information related to the salary of the job.
+
+# References
+1. *https://www.kaggle.com/andrewmvd/data-analyst-jobs* \
+ \
+2. *https://dplyr.tidyverse.org/reference/rename.html* \
+ \
+3. *https://www.datanovia.com/en/blog/ggplot-axis-ticks-set-and-rotate-text-labels* \
+ \
+4. *https://r4ds.had.co.nz/index.html* \
+ \
+5. *https://community.rstudio.com/t/mutate-and-replace-strings-to-new-column/10315* \
+ \
+6. *https://github.com/picklesueat/data_jobs_data/blob/master/DataAnalyst.csv* \
+ \
+7. *https://www.pluralsight.com/guides/linear-lasso-and-ridge-regression-with-r* \
+ \
+8. *https://campus.datacamp.com/courses/machine-learning-with-caret-in-r/regression-models-fitting-them-and-evaluating-their-performance?ex=8* \
+ \
+9. *https://machinelearningmastery.com/k-fold-cross-validation* \
+ \
+10. *https://machinelearningmastery.com/why-one-hot-encode-data-in-machine-learning* \
+ \
+11. *https://stackoverflow.com/questions/31962960/how-to-add-glmnet-prediction-vector-to-a-dataframe-as-a-regular-column* \
+ \
+12. *http://finzi.psych.upenn.edu/library/DescTools/html/EtaSq.html* \
+ \
+13. *https://www.datanovia.com/en/blog/ggplot-axis-limits-and-scales* \
+ \
+14. *https://www.patriotsoftware.com/blog/accounting/average-cost-living-by-state/*
+
